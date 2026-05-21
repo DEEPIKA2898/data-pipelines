@@ -66,7 +66,7 @@ resources:
           description: "Read CSV and write to bronze layer"
           job_cluster_key: etl_cluster
           notebook_task:
-            notebook_path: ./notebooks/01_ingest_bronze
+            notebook_path: ./notebooks/01_ingest_bronze.py
             base_parameters:
               catalog: "${var.catalog}"
               file_path: "${var.file_path}"
@@ -78,7 +78,7 @@ resources:
           depends_on:
             - task_key: ingest_bronze
           notebook_task:
-            notebook_path: ./notebooks/02_transform_silver
+            notebook_path: ./notebooks/02_transform_silver.py
             base_parameters:
               catalog: "${var.catalog}"
 
@@ -89,7 +89,7 @@ resources:
           depends_on:
             - task_key: transform_silver
           notebook_task:
-            notebook_path: ./notebooks/03_aggregate_gold
+            notebook_path: ./notebooks/03_aggregate_gold.py
             base_parameters:
               catalog: "${var.catalog}"
 
