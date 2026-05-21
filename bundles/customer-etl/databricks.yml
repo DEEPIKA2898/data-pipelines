@@ -23,24 +23,22 @@ targets:
   dev:
     mode: development
     default: true
-    workspace:
-      host: ${workspace.host}
     variables:
       catalog: "dev"
 
-  staging:
-    mode: staging
-    workspace:
-      host: ${workspace.host}
-    variables:
-      catalog: "staging"
+  # staging:
+  #   mode: staging
+  #   workspace:
+  #     host: ${workspace.host}
+  #   variables:
+  #     catalog: "staging"
 
-  prod:
-    mode: production
-    workspace:
-      host: ${workspace.host}
-    variables:
-      catalog: "prod"
+  # prod:
+  #   mode: production
+  #   workspace:
+  #     host: ${workspace.host}
+  #   variables:
+  #     catalog: "prod"
 
 # Resources — jobs defined here
 resources:
