@@ -48,6 +48,8 @@ jobs:
           DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST }}    
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }} 
         run: |
+          echo "Host is set: ${{ secrets.DATABRICKS_HOST != '' }}"
+          echo "Token is set: ${{ secrets.DATABRICKS_TOKEN != '' }}"
           cd bundles/customer-etl
           databricks bundle validate --target dev
 
