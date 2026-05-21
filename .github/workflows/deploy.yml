@@ -1,0 +1,130 @@
+# ============================================================
+# .github/workflows/deploy.yml
+# DABs Application Pipeline
+# Triggered by: push to main, PR, or infra-updated event
+# ============================================================
+
+name: DABs Application Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bundles/**'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'bundles/**'
+  repository_dispatch:
+    types: [infra-updated]    # triggered by platform-infra pipeline
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+
+env:
+  DATABRICKS_HOST:    ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_TOKEN:   ${{ secrets.DATABRICKS_TOKEN }}
+
+jobs:
+  # ── 1. Validate ─────────────────────────────────────────────
+  validate:
+    name: Validate Bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Validate bundle
+        run: |
+          cd bundles/customer-etl
+          databricks bundle validate --target dev
+
+  # ── 2. Deploy to Dev ────────────────────────────────────────
+  deploy_dev:
+    name: Deploy / dev
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    environment: dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Fetch infrastructure outputs from Key Vault
+        run: |
+          az login \
+            --service-principal \
+            -u ${{ secrets.ARM_CLIENT_ID }} \
+            -p ${{ secrets.ARM_CLIENT_SECRET }} \
+            --tenant ${{ secrets.ARM_TENANT_ID }}
+
+          TF_OUTPUTS=$(az keyvault secret show \
+            --vault-name "${{ vars.KV_NAME_DEV }}" \
+            --name "tf-outputs" \
+            --query "value" -o tsv)
+
+          echo "CLUSTER_ID=$(echo $TF_OUTPUTS | jq -r '.cluster_id.value')"       >> $GITHUB_ENV
+          echo "CATALOG_NAME=$(echo $TF_OUTPUTS | jq -r '.catalog_name.value')"   >> $GITHUB_ENV
+          echo "WORKSPACE_URL=$(echo $TF_OUTPUTS | jq -r '.workspace_url.value')" >> $GITHUB_ENV
+
+          echo "Infrastructure outputs loaded ✅"
+          echo "Workspace: $(echo $TF_OUTPUTS | jq -r '.workspace_url.value')"
+          echo "Catalog:   $(echo $TF_OUTPUTS | jq -r '.catalog_name.value')"
+
+        env:
+          ARM_CLIENT_ID:     ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_TENANT_ID:     ${{ secrets.ARM_TENANT_ID }}
+
+      - name: Deploy bundle to dev
+        env:
+          DATABRICKS_HOST:  ${{ env.WORKSPACE_URL }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          cd bundles/customer-etl
+          databricks bundle deploy --target dev \
+            --var="catalog=${{ env.CATALOG_NAME }}"
+
+      - name: Run ETL job
+        env:
+          DATABRICKS_HOST:  ${{ env.WORKSPACE_URL }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          cd bundles/customer-etl
+          databricks bundle run --target dev customer_etl_pipeline
+          echo "✅ ETL job triggered"
+
+  # ── 3. Deploy to Staging (manual approval) ──────────────────
+  deploy_staging:
+    name: Deploy / staging
+    runs-on: ubuntu-latest
+    needs: deploy_dev
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Deploy bundle to staging
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_STAGING }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_STAGING }}
+        run: |
+          cd bundles/customer-etl
+          databricks bundle deploy --target staging
