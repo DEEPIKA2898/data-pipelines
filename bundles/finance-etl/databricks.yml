@@ -22,15 +22,15 @@ targets:
     variables:
       catalog: "dev"
 
-  staging:
-    mode: staging
-    variables:
-      catalog: "staging"
+  # staging:
+  #   mode: staging
+  #   variables:
+  #     catalog: "staging"
 
-  prod:
-    mode: production
-    variables:
-      catalog: "prod"
+  # prod:
+  #   mode: production
+  #   variables:
+  #     catalog: "prod"
 
 resources:
   jobs:
