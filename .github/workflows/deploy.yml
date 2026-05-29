@@ -33,22 +33,40 @@ on:
         default: true
 
 jobs:
-  # ── 1. Validate ─────────────────────────────────────────────
+  # ── Detect which bundles changed ──────────────────────────
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      customer: ${{ steps.filter.outputs.customer }}
+      finance:  ${{ steps.filter.outputs.finance }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check changed files
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            customer:
+              - 'bundles/customer-etl/**'
+            finance:
+              - 'bundles/finance-etl/**'
+
+  # ── Validate ───────────────────────────────────────────────
   validate:
     name: Validate / ${{ matrix.bundle }}
+    needs: changes
     runs-on: ubuntu-latest
     environment: dev
     strategy:
       matrix:
         bundle: [customer-etl, finance-etl]
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Install Databricks CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-
+        run: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
       - name: Validate bundle
         env:
           DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST }}
@@ -56,30 +74,24 @@ jobs:
         run: |
           cd bundles/${{ matrix.bundle }}
           databricks bundle validate --target dev
-          echo "✅ ${{ matrix.bundle }} validated"
 
-  # ── 2. Deploy customer-etl ──────────────────────────────────
+  # ── Deploy customer-etl ────────────────────────────────────
   deploy_customer_etl:
     name: Deploy / customer-etl
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [validate, changes]
     environment: dev
-    # Run if: push to main (auto) OR manual with all/customer-etl selected
     if: |
       github.ref == 'refs/heads/main' && (
-        github.event_name == 'push' ||
-        github.event_name == 'repository_dispatch' ||
+        needs.changes.outputs.customer == 'true' ||
         github.event.inputs.bundle == 'all' ||
         github.event.inputs.bundle == 'customer-etl'
       )
 
     steps:
       - uses: actions/checkout@v4
-
       - name: Install Databricks CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-
+        run: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
       - name: Fetch outputs from Key Vault
         run: |
           az login \
@@ -87,15 +99,11 @@ jobs:
             -u ${{ secrets.ARM_CLIENT_ID }} \
             -p ${{ secrets.ARM_CLIENT_SECRET }} \
             --tenant ${{ secrets.ARM_TENANT_ID }}
-
           TF_OUTPUTS=$(az keyvault secret show \
             --vault-name "${{ vars.KV_NAME_DEV }}" \
-            --name "tf-outputs" \
-            --query "value" -o tsv)
-
-          echo "CATALOG_NAME=$(echo $TF_OUTPUTS  | jq -r '.catalog_name.value')"  >> $GITHUB_ENV
+            --name "tf-outputs" --query "value" -o tsv)
+          echo "CATALOG_NAME=$(echo $TF_OUTPUTS | jq -r '.catalog_name.value')" >> $GITHUB_ENV
           echo "WORKSPACE_URL=$(echo $TF_OUTPUTS | jq -r '.workspace_url.value')" >> $GITHUB_ENV
-
       - name: Deploy customer-etl
         env:
           DATABRICKS_HOST:  ${{ env.WORKSPACE_URL }}
@@ -104,40 +112,31 @@ jobs:
           cd bundles/customer-etl
           databricks bundle deploy --target dev \
             --var="catalog=${{ env.CATALOG_NAME }}"
-          echo "✅ customer-etl deployed"
-
       - name: Run customer-etl job
-        if: github.event.inputs.run_job != 'false'
         env:
           DATABRICKS_HOST:  ${{ env.WORKSPACE_URL }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
           cd bundles/customer-etl
           databricks bundle run --target dev customer_etl_pipeline
-          echo "✅ customer-etl job triggered"
 
-  # ── 3. Deploy finance-etl ───────────────────────────────────
+  # ── Deploy finance-etl ─────────────────────────────────────
   deploy_finance_etl:
     name: Deploy / finance-etl
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [validate, changes]
     environment: dev
-    # Run if: push to main (auto) OR manual with all/finance-etl selected
     if: |
       github.ref == 'refs/heads/main' && (
-        github.event_name == 'push' ||
-        github.event_name == 'repository_dispatch' ||
+        needs.changes.outputs.finance == 'true' ||
         github.event.inputs.bundle == 'all' ||
         github.event.inputs.bundle == 'finance-etl'
       )
 
     steps:
       - uses: actions/checkout@v4
-
       - name: Install Databricks CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-
+        run: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
       - name: Fetch outputs from Key Vault
         run: |
           az login \
@@ -145,15 +144,11 @@ jobs:
             -u ${{ secrets.ARM_CLIENT_ID }} \
             -p ${{ secrets.ARM_CLIENT_SECRET }} \
             --tenant ${{ secrets.ARM_TENANT_ID }}
-
           TF_OUTPUTS=$(az keyvault secret show \
             --vault-name "${{ vars.KV_NAME_DEV }}" \
-            --name "tf-outputs" \
-            --query "value" -o tsv)
-
-          echo "CATALOG_NAME=$(echo $TF_OUTPUTS  | jq -r '.catalog_name.value')"  >> $GITHUB_ENV
+            --name "tf-outputs" --query "value" -o tsv)
+          echo "CATALOG_NAME=$(echo $TF_OUTPUTS | jq -r '.catalog_name.value')" >> $GITHUB_ENV
           echo "WORKSPACE_URL=$(echo $TF_OUTPUTS | jq -r '.workspace_url.value')" >> $GITHUB_ENV
-
       - name: Deploy finance-etl
         env:
           DATABRICKS_HOST:  ${{ env.WORKSPACE_URL }}
@@ -162,14 +157,10 @@ jobs:
           cd bundles/finance-etl
           databricks bundle deploy --target dev \
             --var="catalog=${{ env.CATALOG_NAME }}"
-          echo "✅ finance-etl deployed"
-
       - name: Run finance-etl job
-        if: github.event.inputs.run_job != 'false'
         env:
           DATABRICKS_HOST:  ${{ env.WORKSPACE_URL }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
           cd bundles/finance-etl
           databricks bundle run --target dev finance_etl_pipeline
-          echo "✅ finance-etl job triggered"
